@@ -1,0 +1,127 @@
+---
+output: html_document
+---
+
+# Introduction
+
+This report looks at information about colleges from the College Scorecard dataset. I am focusing on graduation rates, student debt, and earnings. The goal is to see what patterns appear in the data.
+
+# Data Dictionary
+
+The original dataset from Deliverable 1 has 7,675 rows and 1,729 columns. I am only using seven variables for this report.
+
+| Variable | Meaning | Type |
+|---|---|---|
+| `INSTNM` | Name of the college | Categorical |
+| `STABBR` | State where the college is located | Categorical |
+| `CONTROL` | Type of college ownership | Categorical |
+| `UGDS` | Number of undergraduate students | Numerical |
+| `C150_4` | Graduation rate for four-year colleges | Numerical |
+| `DEBT_MDN` | Median student debt | Numerical |
+| `MD_EARN_WNE_P10` | Median earnings ten years after students first enrolled | Numerical |
+
+# Load the Data
+
+The code below downloads the College Scorecard data and keeps only the seven variables listed above.
+
+```{r, message=FALSE, warning=FALSE}
+# Download and open the dataset
+url <- "https://ed-public-download.scorecard.network/downloads/Most-Recent-Cohorts-Institution_05192025.zip"
+zip_file <- tempfile(fileext = ".zip")
+download.file(url, zip_file, mode = "wb", quiet = TRUE)
+folder <- tempfile()
+dir.create(folder)
+unzip(zip_file, exdir = folder)
+csv_file <- list.files(folder, pattern = "\\.csv$", recursive = TRUE, full.names = TRUE)[1]
+
+college_data <- read.csv(csv_file, stringsAsFactors = FALSE,
+                         na.strings = c("", "NA", "PrivacySuppressed", "PS"))
+
+# Keep the variables used in this report
+college_data <- college_data[, c("INSTNM", "STABBR", "CONTROL", "UGDS",
+                                 "C150_4", "DEBT_MDN", "MD_EARN_WNE_P10")]
+
+# Make the number columns numeric
+college_data$UGDS <- as.numeric(college_data$UGDS)
+college_data$C150_4 <- as.numeric(college_data$C150_4)
+college_data$DEBT_MDN <- as.numeric(college_data$DEBT_MDN)
+college_data$MD_EARN_WNE_P10 <- as.numeric(college_data$MD_EARN_WNE_P10)
+```
+
+# Dataset Size
+
+The original dataset has 7,675 rows and 1,729 columns. The table below shows the size after selecting the seven variables.
+
+```{r}
+dim(college_data)
+```
+
+The first number is the number of colleges (rows). The second number is the number of variables (columns) used in this report.
+
+# Summary Statistics
+
+## Numerical Variables
+
+This table gives basic summary information for the numerical variables. It includes the minimum, maximum, median, and other values.
+
+```{r}
+summary(college_data[, c("UGDS", "C150_4", "DEBT_MDN", "MD_EARN_WNE_P10")])
+```
+
+The summary helps show how much colleges differ in enrollment, graduation rates, debt, and earnings.
+
+## Histograms
+
+```{r}
+hist(na.omit(college_data$C150_4), main = "Graduation Rates", xlab = "Graduation rate")
+```
+
+This histogram shows how graduation rates are spread across the colleges in the dataset.
+
+```{r}
+hist(na.omit(college_data$DEBT_MDN), main = "Median Student Debt", xlab = "Debt in dollars")
+```
+
+This histogram shows how reported student debt differs between colleges.
+
+```{r}
+hist(na.omit(college_data$MD_EARN_WNE_P10), main = "Median Earnings", xlab = "Earnings in dollars")
+```
+
+This histogram shows the reported earnings ten years after students first enrolled. It does not mean every graduate earns this amount.
+
+## Categorical Variable
+
+```{r}
+table(college_data$CONTROL, useNA = "ifany")
+```
+
+This table counts how many colleges are in each ownership category. The values are codes used by the original dataset.
+
+# Data Cleanliness
+
+This table shows how many missing values appear in each variable.
+
+```{r}
+colSums(is.na(college_data))
+```
+
+Some information is missing because not every college reports every measure. Some values may also be suppressed to protect student privacy. Missing values are not the same as zero.
+
+The code below checks for duplicate rows.
+
+```{r}
+sum(duplicated(college_data))
+```
+
+This gives the number of duplicate rows in the selected data. No rows are removed in this report.
+
+# Discussion
+
+The College Scorecard dataset has a lot of information about colleges. For this report, I focused on a small number of variables related to graduation rates, student debt, and earnings. The summary statistics and histograms make it easier to see how colleges differ in these areas. They also give me a starting point for looking at possible relationships between the variables.
+
+There are some limits to this data. Some values are missing or hidden, and the earnings measure is based on ten years after students first enrolled, not necessarily ten years after they graduated. The dataset also describes colleges overall instead of individual students. For the next part of the project, I plan to compare graduation rates with debt and earnings using simple scatterplots. This could help show whether these variables are related, but it would not prove that one causes another.
+
+# References
+
+U.S. Department of Education. *College Scorecard Dataset*. Data.gov. https://catalog.data.gov/dataset/college-scorecard
