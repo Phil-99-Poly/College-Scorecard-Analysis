@@ -1,0 +1,353 @@
+---
+title: "Deliverable 4: College Scorecard Analysis"
+output:
+  html_document:
+    toc: true
+    toc_depth: 2
+    df_print: paged
+---
+
+# Changes Since Deliverable 3
+
+The TA reviewed Deliverable 3 and said, "great job!" No specific corrections were requested. For this deliverable, I kept the same research topic and seven variables while making the following additions and updates:
+
+- Replaced the base R histograms with `ggplot2` visualizations.
+- Added comparisons of graduation rates across institution types.
+- Added scatterplots to examine relationships between graduation rates, student debt, and post-college earnings.
+- Expanded the data-cleanliness checks and updated the data dictionary and summary sections.
+- Added descriptions below every visualization and an Overall Take section.
+
+# Introduction
+
+This report uses the U.S. Department of Education's College Scorecard data to examine graduation rates, student debt, and post-college earnings across colleges. The goal is to identify patterns and relationships in these measures. The analysis describes associations in the data; it does not show that one measure causes another.
+
+# Data Dictionary
+
+The analysis focuses on seven variables from the College Scorecard dataset.
+
+| Variable | Meaning | Type | Units / Notes |
+|---|---|---|---|
+| `INSTNM` | Name of the college | Categorical | Institution name |
+| `STABBR` | State where the college is located | Categorical | Two-letter state abbreviation |
+| `CONTROL` | Type of institution ownership | Categorical | 1 = Public; 2 = Private nonprofit; 3 = Private for-profit |
+| `UGDS` | Undergraduate enrollment | Numerical | Number of undergraduate students |
+| `C150_4` | Completion rate for first-time, full-time students at four-year institutions, measured within 150% of normal program time | Numerical | Proportion from 0 to 1; multiplied by 100 for percentages in charts |
+| `DEBT_MDN` | Median student debt measure reported by the College Scorecard | Numerical | U.S. dollars |
+| `MD_EARN_WNE_P10` | Median earnings ten years after students first enrolled | Numerical | U.S. dollars; this is not necessarily ten years after graduation |
+
+# Load the Data
+
+The code below downloads the College Scorecard institution-level file and keeps the seven variables listed in the data dictionary. The dimensions of the downloaded file are recorded before selecting the variables, so the report reflects the file that is actually downloaded.
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+
+# Install ggplot2 separately in Posit Cloud if it is not already installed.
+library(ggplot2)
+
+url <- "https://ed-public-download.scorecard.network/downloads/Most-Recent-Cohorts-Institution_05192025.zip"
+zip_file <- tempfile(fileext = ".zip")
+download.file(url, zip_file, mode = "wb", quiet = TRUE)
+
+folder <- tempfile()
+dir.create(folder)
+unzip(zip_file, exdir = folder)
+
+csv_files <- list.files(folder, pattern = "\\.csv$", recursive = TRUE,
+                        full.names = TRUE)
+if (length(csv_files) == 0) {
+  stop("No CSV file was found in the downloaded College Scorecard archive.")
+}
+csv_file <- csv_files[1]
+
+raw_data <- read.csv(
+  csv_file,
+  stringsAsFactors = FALSE,
+  na.strings = c("", "NA", "PrivacySuppressed", "PS", "NULL")
+)
+
+original_dimensions <- dim(raw_data)
+
+required_columns <- c(
+  "INSTNM", "STABBR", "CONTROL", "UGDS",
+  "C150_4", "DEBT_MDN", "MD_EARN_WNE_P10"
+)
+
+missing_columns <- setdiff(required_columns, names(raw_data))
+if (length(missing_columns) > 0) {
+  stop(paste("The downloaded file is missing required columns:",
+             paste(missing_columns, collapse = ", ")))
+}
+
+college_data <- raw_data[, required_columns]
+
+# Convert numeric fields to numeric values.
+numeric_columns <- c("UGDS", "C150_4", "DEBT_MDN", "MD_EARN_WNE_P10")
+college_data[numeric_columns] <- lapply(
+  college_data[numeric_columns],
+  function(x) as.numeric(as.character(x))
+)
+
+# Give institution ownership codes readable labels for tables and charts.
+control_labels <- c(
+  "1" = "Public",
+  "2" = "Private nonprofit",
+  "3" = "Private for-profit"
+)
+college_data$CONTROL <- unname(control_labels[as.character(college_data$CONTROL)])
+college_data$CONTROL <- factor(
+  college_data$CONTROL,
+  levels = c("Public", "Private nonprofit", "Private for-profit")
+)
+
+# A consistent color mapping is used for institution type throughout the report.
+control_colors <- c(
+  "Public" = "#2878B5",
+  "Private nonprofit" = "#E07A2D",
+  "Private for-profit" = "#399A70"
+)
+```
+
+# Dataset Size
+
+The original downloaded file and the selected analysis data have different numbers of columns because this project uses only seven variables.
+
+```{r}
+cat("Downloaded dataset dimensions:", original_dimensions[1], "rows and",
+    original_dimensions[2], "columns\n")
+cat("Selected analysis dataset dimensions:", nrow(college_data), "rows and",
+    ncol(college_data), "columns\n")
+```
+
+The selected data contain one row per institution in the downloaded file and seven columns used in this analysis.
+
+# Summary Statistics
+
+## Numerical Variables
+
+The table below provides summary statistics for undergraduate enrollment, graduation rate, median student debt, and median earnings.
+
+```{r}
+summary(college_data[, numeric_columns])
+```
+
+Graduation rates are stored as proportions in the dataset. For example, a value of 0.50 represents 50%. The visualizations convert this variable to a percentage so that the axes are easier to read. Debt and earnings are reported in U.S. dollars.
+
+## Categorical Variable
+
+```{r}
+table(college_data$CONTROL, useNA = "ifany")
+```
+
+The table counts institutions by ownership type. The original numeric codes are displayed as readable category names. Missing values may include records with an ownership code that was not one of the three listed categories.
+
+# Data Cleanliness
+
+The following table counts missing values in each selected variable. Values marked as privacy-suppressed in the source file are treated as missing rather than as zero.
+
+```{r}
+missing_counts <- data.frame(
+  Variable = names(college_data),
+  Missing_Values = colSums(is.na(college_data)),
+  Missing_Percent = round(colMeans(is.na(college_data)) * 100, 2)
+)
+missing_counts
+```
+
+Missing information matters because each chart uses only the institutions with non-missing values for the variables in that chart. As a result, the number of institutions can differ from one visualization to another.
+
+The next checks identify duplicate rows and values that may need closer review.
+
+```{r}
+cat("Duplicate rows:", sum(duplicated(college_data)), "\n")
+
+quality_checks <- data.frame(
+  Check = c(
+    "Negative undergraduate enrollment",
+    "Graduation rate below 0",
+    "Graduation rate above 1",
+    "Negative median debt",
+    "Negative median earnings"
+  ),
+  Count = c(
+    sum(college_data$UGDS < 0, na.rm = TRUE),
+    sum(college_data$C150_4 < 0, na.rm = TRUE),
+    sum(college_data$C150_4 > 1, na.rm = TRUE),
+    sum(college_data$DEBT_MDN < 0, na.rm = TRUE),
+    sum(college_data$MD_EARN_WNE_P10 < 0, na.rm = TRUE)
+  )
+)
+quality_checks
+```
+
+The checks help identify values that are outside expected ranges. A graduation rate should normally be between 0 and 1, while enrollment, debt, and earnings should not be negative. This report does not automatically remove records based on these checks. Any unusual values should be reviewed against the source documentation before deciding whether they are errors.
+
+# Data Visualizations
+
+The charts below use `ggplot2`. Each chart uses the available non-missing observations for the variables shown. Therefore, sample sizes can vary across charts.
+
+## 1. Distribution of Graduation Rates
+
+```{r fig.width=8, fig.height=5}
+ggplot(
+  college_data[!is.na(college_data$C150_4), ],
+  aes(x = C150_4 * 100)
+) +
+  geom_histogram(
+    bins = 30,
+    fill = "#2878B5",
+    color = "white",
+    na.rm = TRUE
+  ) +
+  labs(
+    title = "Distribution of College Graduation Rates",
+    x = "Graduation rate (%)",
+    y = "Number of institutions"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+**Description:** This histogram shows the distribution of graduation rates across institutions. It uses `C150_4`, converted from a proportion to a percentage. The shape of the histogram shows whether most institutions are clustered around lower, middle, or higher graduation rates and whether there are institutions at the extremes. Differences may reflect institution type, student populations, selectivity, and available resources. As a next step, I would compare this distribution across public, private nonprofit, and private for-profit institutions and check whether missing graduation-rate values are concentrated in any group.
+
+## 2. Distribution of Median Student Debt
+
+```{r fig.width=8, fig.height=5}
+ggplot(
+  college_data[!is.na(college_data$DEBT_MDN), ],
+  aes(x = DEBT_MDN)
+) +
+  geom_histogram(
+    bins = 30,
+    fill = "#2878B5",
+    color = "white",
+    na.rm = TRUE
+  ) +
+  scale_x_continuous(labels = scales::label_dollar()) +
+  labs(
+    title = "Distribution of Median Student Debt",
+    x = "Median student debt (U.S. dollars)",
+    y = "Number of institutions"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+**Description:** This histogram shows how the reported median student debt measure is distributed across institutions. It uses `DEBT_MDN`, measured in U.S. dollars. A long tail toward higher values would suggest that a smaller number of institutions report substantially higher typical debt than most institutions. Differences could be related to tuition, program length, student financial need, or the mix of programs offered. I would next compare debt by institution type and verify the exact population covered by the debt measure in the College Scorecard documentation.
+
+## 3. Distribution of Post-Entry Earnings
+
+```{r fig.width=8, fig.height=5}
+ggplot(
+  college_data[!is.na(college_data$MD_EARN_WNE_P10), ],
+  aes(x = MD_EARN_WNE_P10)
+) +
+  geom_histogram(
+    bins = 30,
+    fill = "#2878B5",
+    color = "white",
+    na.rm = TRUE
+  ) +
+  scale_x_continuous(labels = scales::label_dollar()) +
+  labs(
+    title = "Distribution of Median Earnings Ten Years After Entry",
+    x = "Median earnings (U.S. dollars)",
+    y = "Number of institutions"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+**Description:** This histogram shows the distribution of the reported median earnings measure ten years after students first enrolled. It uses `MD_EARN_WNE_P10`, measured in U.S. dollars. The chart can show whether earnings are concentrated within a particular range and whether a smaller number of institutions have much higher reported earnings. Possible explanations include differences in fields of study, local labor markets, student characteristics, and the types of institutions represented. I would next compare earnings across institution types and investigate whether unusually high or low values are associated with particular programs or locations. This measure should not be interpreted as earnings exactly ten years after graduation.
+
+## 4. Average Graduation Rate by Institution Type
+
+```{r fig.width=8, fig.height=5}
+graduation_by_control <- aggregate(
+  C150_4 ~ CONTROL,
+  data = college_data[!is.na(college_data$CONTROL) &
+                        !is.na(college_data$C150_4), ],
+  FUN = mean
+)
+graduation_by_control$Average_Graduation_Percent <-
+  graduation_by_control$C150_4 * 100
+
+ggplot(
+  graduation_by_control,
+  aes(x = CONTROL, y = Average_Graduation_Percent, fill = CONTROL)
+) +
+  geom_col(width = 0.7) +
+  scale_fill_manual(values = control_colors, drop = FALSE) +
+  labs(
+    title = "Average Graduation Rate by Institution Type",
+    x = "Institution type",
+    y = "Average graduation rate (%)",
+    fill = "Institution type"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 15, hjust = 1)
+  )
+```
+
+**Description:** This bar chart compares the average graduation rate across public, private nonprofit, and private for-profit institutions. It uses `CONTROL` to group institutions and `C150_4` to calculate the average graduation rate. Differences between the bars suggest that graduation outcomes vary across institution types. Those differences may be connected to admissions practices, student resources, institutional missions, or the students served. However, the averages do not account for differences in student populations or institution size. I would next compare the number of institutions and the spread of graduation rates within each group, rather than relying only on group averages.
+
+## 5. Relationship Between Graduation Rates and Student Debt
+
+```{r fig.width=8, fig.height=5}
+ggplot(
+  college_data[
+    !is.na(college_data$C150_4) & !is.na(college_data$DEBT_MDN), ],
+  aes(x = C150_4 * 100, y = DEBT_MDN)
+) +
+  geom_point(alpha = 0.45, color = "#2878B5") +
+  geom_smooth(method = "lm", se = TRUE, color = "#E07A2D") +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(
+    title = "Graduation Rates and Median Student Debt",
+    x = "Graduation rate (%)",
+    y = "Median student debt (U.S. dollars)"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+**Description:** This scatterplot examines the relationship between graduation rates and median student debt. Each point represents an institution. The variables are `C150_4`, converted to a percentage, and `DEBT_MDN`, measured in U.S. dollars. The fitted line summarizes the overall linear pattern, while the spread of points shows how much institutions differ around that pattern. A visible upward or downward pattern would suggest an association, but it would not mean graduation rates cause debt levels to change. Tuition, financial aid, student background, and program mix could help explain the pattern. I would next examine outliers and compare the relationship separately by institution type.
+
+## 6. Graduation Rates and Earnings by Institution Type
+
+```{r fig.width=8, fig.height=5}
+ggplot(
+  college_data[
+    !is.na(college_data$C150_4) &
+      !is.na(college_data$MD_EARN_WNE_P10) &
+      !is.na(college_data$CONTROL), ],
+  aes(
+    x = C150_4 * 100,
+    y = MD_EARN_WNE_P10,
+    color = CONTROL
+  )
+) +
+  geom_point(alpha = 0.55) +
+  scale_color_manual(values = control_colors, drop = FALSE) +
+  scale_y_continuous(labels = scales::label_dollar()) +
+  labs(
+    title = "Graduation Rates and Post-Entry Earnings by Institution Type",
+    x = "Graduation rate (%)",
+    y = "Median earnings ten years after entry (U.S. dollars)",
+    color = "Institution type"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "bottom")
+```
+
+**Description:** This scatterplot shows the relationship between graduation rates and median earnings ten years after students first enrolled. Each point represents an institution, and color identifies its ownership type using the same category colors as the previous comparison. The chart makes it possible to look for an overall relationship while also seeing whether the groups appear to follow different patterns. Earnings may vary because of program offerings, regional labor markets, student characteristics, and other factors beyond graduation rates. I would next compare the groups' distributions and investigate whether the pattern changes when institutions with unusually high or low values are examined separately.
+
+# Overall Take
+
+So far, the College Scorecard data show how much colleges can differ in graduation rates, student debt, and post-entry earnings. Looking at the distributions is useful because it shows that a single average cannot describe every institution. Comparing graduation rates by institution type and examining the scatterplots also helps show whether these outcomes appear to move together. These patterns are useful starting points, but they do not establish that one measure causes another.
+
+One thing I want to understand better is whether the relationship between graduation rates and earnings looks different across public, private nonprofit, and private for-profit institutions. I also want to look more closely at institutions that appear far from the overall patterns. Missing values and differences in the kinds of students and programs at each institution could affect the comparisons, so those limitations need to remain part of the interpretation.
+
+For my draft, I plan to focus on the strongest patterns involving graduation rates, student debt, and earnings. I will use the visualizations to organize the discussion, explain what the data can and cannot show, and avoid making causal claims. I also want to check the source definitions and investigate outliers before deciding which findings deserve the most attention.
+
+# References
+
+U.S. Department of Education. *College Scorecard Dataset*. Data.gov. https://catalog.data.gov/dataset/college-scorecard
